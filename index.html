@@ -690,7 +690,7 @@ function showTooltip(ev, sp){
   tooltip.innerHTML = `<div class="t-name">${sp.common}</div><div class="t-sub">${sp.latin} · ${sp.class}</div>
     <div>unit length <b style="color:var(--text-primary)">${sp.unitLength.toLocaleString()} bp</b></div>
     <div>array copies <b style="color:var(--text-primary)">${sp.arrayCount}</b></div>
-    <div>GC content <b style="color:var(--text-primary)">${sp.gc}%</b></div>`;
+    <div>taxonomic group <b style="color:var(--text-primary)">${sp.group}</b></div>;
   tooltip.style.display="block"; moveTooltip(ev);
 }
 function moveTooltip(ev){ tooltip.style.left=(ev.clientX+16)+"px"; tooltip.style.top=(ev.clientY+16)+"px"; }
