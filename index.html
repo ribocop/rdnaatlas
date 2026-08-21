@@ -91,6 +91,119 @@
   .repeat-note{font-family:var(--font-mono); font-size:10.5px; color:var(--g-repeat); margin-top:6px;}
   .badge-5s{display:inline-flex; align-items:center; gap:6px; font-family:var(--font-mono); font-size:11px; color:var(--g-5s); border:1px solid #3A2E5C; background:#1E1830; padding:4px 10px; border-radius:6px; margin-top:14px;}
   footer{padding:14px 28px; border-top:1px solid var(--border); font-family:var(--font-mono); font-size:10.5px; color:var(--text-muted); background:var(--panel);}
+  /* ---------- summary tab ---------- */
+  .tabs {
+    display:flex;
+    gap:4px;
+    padding:0 28px;
+    background:var(--panel);
+    border-bottom:1px solid var(--border);
+  }
+  
+  .tab {
+    background:none;
+    border:none;
+    color:var(--text-muted);
+    padding:12px 18px;
+    font-family:var(--font-body);
+    font-size:13px;
+    cursor:pointer;
+    border-bottom:2px solid transparent;
+  }
+  
+  .tab:hover {
+    color:var(--text-primary);
+  }
+  
+  .tab.active {
+    color:var(--text-primary);
+    border-bottom-color:var(--accent);
+  }
+  
+  #summaryView {
+    padding:28px;
+    overflow:auto;
+    background:var(--bg);
+  }
+  
+  .summary-header {
+    max-width:1100px;
+    margin:0 auto 24px;
+  }
+  
+  .summary-header h2 {
+    font-family:var(--font-display);
+    font-size:20px;
+    font-weight:600;
+    margin:0 0 6px;
+  }
+  
+  .summary-header p {
+    color:var(--text-muted);
+    font-size:12px;
+    margin:0;
+  }
+  
+  .summary-grid {
+    max-width:1100px;
+    margin:0 auto;
+    display:grid;
+    grid-template-columns:1fr;
+    gap:18px;
+  }
+  
+  .summary-card {
+    background:var(--panel);
+    border:1px solid var(--border);
+    border-radius:var(--radius);
+    padding:16px 18px;
+  }
+  
+  .summary-card h3 {
+    font-family:var(--font-display);
+    font-size:13px;
+    font-weight:600;
+    margin:0 0 4px;
+    color:var(--text-secondary);
+  }
+  
+  .summary-card .summary-n {
+    font-family:var(--font-mono);
+    font-size:10px;
+    color:var(--text-muted);
+  }
+  
+  .summary-card svg {
+    display:block;
+    width:100%;
+    height:auto;
+  }
+  
+  .boxplot {
+    fill:var(--panel-2);
+    stroke:var(--text-secondary);
+    stroke-width:1.2px;
+  }
+  
+  .box-median {
+    stroke:var(--accent);
+    stroke-width:2px;
+  }
+  
+  .whisker {
+    stroke:var(--text-muted);
+    stroke-width:1px;
+  }
+  
+  .jitter-point {
+    fill:var(--text-secondary);
+    opacity:0.45;
+  }
+  
+  .jitter-point:hover {
+    fill:var(--accent);
+    opacity:1;
+  }
 </style>
 </head>
 <body>
@@ -102,47 +215,62 @@
   </div>
   <span class="note" id="loadNote">loading species.json…</span>
 </header>
-
-<div class="layout">
-  <aside class="controls">
-    <div class="group">
-      <h2>Search</h2>
-      <input type="search" id="search" placeholder="Species or accession…">
-    </div>
-    <div class="group">
-      <h2>Colour tips by</h2>
-      <button class="metric-btn active" data-metric="unitLength"><span class="swatch"></span>Unit length</button>
-      <button class="metric-btn" data-metric="nunits"><span class="swatch"></span>rRNA unit count</button>
-      <button class="metric-btn" data-metric="rmad"><span class="swatch"></span>Sequence variability (RMAD)</button>
-      <button class="metric-btn" data-metric="taxgroup"><span class="swatch"></span>Taxonomic group</button>
-    </div>
-    <div class="group">
-      <h2>Taxonomic group</h2>
-      <div id="chips"></div>
-    </div>
-    <div class="group">
-      <h2>Unit map key</h2>
-      <div class="legend-key">
-        <div><span class="dot" style="background:var(--g-18s)"></span>18S rRNA</div>
-        <div><span class="dot" style="background:var(--g-58s)"></span>5.8S rRNA</div>
-        <div><span class="dot" style="background:var(--g-28s)"></span>28S rRNA</div>
-        <div><span class="dot" style="background:var(--g-spacer)"></span>Spacer (non-coding)</div>
+<div class="tabs">
+  <button class="tab active" data-tab="tree">Tree</button>
+  <button class="tab" data-tab="summary">Summary</button>
+</div>
+  
+<div id="treeView">  
+  <div class="layout">
+    <aside class="controls">
+      <div class="group">
+        <h2>Search</h2>
+        <input type="search" id="search" placeholder="Species or accession…">
       </div>
-    </div>
-    <div class="group">
-      <h2>Repeat key</h2>
-      <div class="legend-key" id="repeatLegend"></div>
-    </div>
-    <div class="group" id="summaryStats"></div>
-  </aside>
-
-  <main class="tree-pane" id="treePane"></main>
-
-  <aside class="detail" id="detail">
-    <div class="empty">Select a tip on the tree to view its rDNA unit structure.</div>
-  </aside>
+      <div class="group">
+        <h2>Colour tips by</h2>
+        <button class="metric-btn active" data-metric="unitLength"><span class="swatch"></span>Unit length</button>
+        <button class="metric-btn" data-metric="nunits"><span class="swatch"></span>rRNA unit count</button>
+        <button class="metric-btn" data-metric="rmad"><span class="swatch"></span>Sequence variability (RMAD)</button>
+        <button class="metric-btn" data-metric="taxgroup"><span class="swatch"></span>Taxonomic group</button>
+      </div>
+      <div class="group">
+        <h2>Taxonomic group</h2>
+        <div id="chips"></div>
+      </div>
+      <div class="group">
+        <h2>Unit map key</h2>
+        <div class="legend-key">
+          <div><span class="dot" style="background:var(--g-18s)"></span>18S rRNA</div>
+          <div><span class="dot" style="background:var(--g-58s)"></span>5.8S rRNA</div>
+          <div><span class="dot" style="background:var(--g-28s)"></span>28S rRNA</div>
+          <div><span class="dot" style="background:var(--g-spacer)"></span>Spacer (non-coding)</div>
+        </div>
+      </div>
+      <div class="group">
+        <h2>Repeat key</h2>
+        <div class="legend-key" id="repeatLegend"></div>
+      </div>
+      <div class="group" id="summaryStats"></div>
+    </aside>
+  
+    <main class="tree-pane" id="treePane"></main>
+  
+    <aside class="detail" id="detail">
+      <div class="empty">Select a tip on the tree to view its rDNA unit structure.</div>
+    </aside>
+  </div>
 </div>
 
+<div id="summaryView" style="display:none;">
+  <div class="summary-header">
+    <h2>rDNA unit composition across taxonomic groups</h2>
+    <p>Boxplots show the distribution across species; points represent individual species.</p>
+  </div>
+
+  <div class="summary-grid" id="summaryPlots"></div>
+</div>
+  
 <footer>Ribocop pipeline output — 650 chordate assemblies. Loaded live from species.json (must be served, not opened as a local file — see notes below).</footer>
 <div class="tooltip" id="tooltip"></div>
 
@@ -482,6 +610,282 @@ function buildSummary(){
     <div class="stat-line"><span>Median unit length</span><span>${Math.round(d3.median(species,d=>d.unitLength)).toLocaleString()} bp</span></div>
   `;
 }
+// ---------- summary plots ----------
+
+const SUMMARY_METRICS = [
+  { key:"unitLength", label:"Total rDNA unit length", source:"unitLength" },
+  { key:"18S", label:"18S rRNA length" },
+  { key:"5.8S", label:"5.8S rRNA length" },
+  { key:"28S", label:"28S rRNA length" },
+  { key:"tandem", label:"Tandem repeat length" },
+  { key:"simple", label:"Simple repeat length" },
+  { key:"other", label:"Other repeat length" }
+];
+
+function getSummaryValue(sp, metric){
+
+  if(metric.source === "unitLength"){
+    return sp.unitLength;
+  }
+
+  if(metric.key === "18S"){
+    return sumSegmentLength(sp, ["18S_rRNA"]);
+  }
+
+  if(metric.key === "5.8S"){
+    return sumSegmentLength(sp, ["5_8S_rRNA"]);
+  }
+
+  if(metric.key === "28S"){
+    return sumSegmentLength(sp, ["28S_rRNA"]);
+  }
+
+  const repeats = sp.repeats || [];
+
+  if(metric.key === "tandem"){
+    return sumRepeatLength(repeats, ["Tandem"]);
+  }
+
+  if(metric.key === "simple"){
+    return sumRepeatLength(repeats, ["Simple"]);
+  }
+
+  if(metric.key === "other"){
+    return sumRepeatLength(
+      repeats,
+      repeats
+        .map(r => r.type || "Unclassified")
+        .filter(t => t !== "Tandem" && t !== "Simple")
+    );
+  }
+
+  return 0;
+}
+
+function sumSegmentLength(sp, types){
+  return (sp.segs || [])
+    .filter(s => types.includes(s.type))
+    .reduce((sum, s) => sum + (s.end - s.start), 0);
+}
+
+function sumRepeatLength(repeats, types){
+  return repeats
+    .filter(r => types.includes(r.type || "Unclassified"))
+    .reduce((sum, r) => sum + (r.end - r.start), 0);
+}
+
+function buildSummaryData(metric){
+
+  return species
+    .map(sp => ({
+      species: sp.Species,
+      taxgroup: sp.taxgroup,
+      value: getSummaryValue(sp, metric)
+    }))
+    .filter(d => Number.isFinite(d.value));
+}
+
+
+function buildSummaryPlots(){
+
+  const container = d3.select("#summaryPlots");
+  container.html("");
+
+  SUMMARY_METRICS.forEach(metric => {
+
+    const data = buildSummaryData(metric);
+
+    const groups = [...new Set(data.map(d => d.taxgroup))]
+      .sort((a,b) => {
+        const ai = [...activeGroups].indexOf(a);
+        const bi = [...activeGroups].indexOf(b);
+        return ai - bi;
+      });
+
+    const margin = {
+      top:20,
+      right:20,
+      bottom:65,
+      left:75
+    };
+
+    const width = 1050;
+    const height = 300;
+    const innerWidth = width - margin.left - margin.right;
+    const innerHeight = height - margin.top - margin.bottom;
+
+    const card = container.append("div")
+      .attr("class","summary-card");
+
+    card.append("h3")
+      .text(metric.label);
+
+    card.append("div")
+      .attr("class","summary-n")
+      .text(`${data.length} species`);
+
+    const svg = card.append("svg")
+      .attr("viewBox", `0 0 ${width} ${height}`)
+      .attr("preserveAspectRatio","xMidYMid meet");
+
+    const g = svg.append("g")
+      .attr("transform", `translate(${margin.left},${margin.top})`);
+
+    const x = d3.scaleBand()
+      .domain(groups)
+      .range([0, innerWidth])
+      .padding(0.25);
+
+    const y = d3.scaleLinear()
+      .domain([0, d3.max(data, d => d.value) * 1.05])
+      .nice()
+      .range([innerHeight, 0]);
+
+    // gridlines
+    g.append("g")
+      .attr("class","grid")
+      .call(
+        d3.axisLeft(y)
+          .tickSize(-innerWidth)
+          .tickFormat("")
+      )
+      .selectAll("line")
+      .attr("stroke","var(--border)");
+
+    g.select(".grid .domain").remove();
+
+    // y axis
+    g.append("g")
+      .call(
+        d3.axisLeft(y)
+          .ticks(5)
+          .tickFormat(d3.format(","))
+      );
+
+    // x axis
+    g.append("g")
+      .attr("transform", `translate(0,${innerHeight})`)
+      .call(
+        d3.axisBottom(x)
+          .tickSize(0)
+      )
+      .selectAll("text")
+      .attr("transform","rotate(-35)")
+      .style("text-anchor","end");
+
+    // boxplot for each taxonomic group
+    groups.forEach(group => {
+
+      const vals = data
+        .filter(d => d.taxgroup === group)
+        .map(d => d.value)
+        .sort(d3.ascending);
+
+      if(!vals.length) return;
+
+      const q1 = d3.quantile(vals, 0.25);
+      const median = d3.quantile(vals, 0.50);
+      const q3 = d3.quantile(vals, 0.75);
+
+      const iqr = q3 - q1;
+      const lower = Math.max(
+        d3.min(vals),
+        q1 - 1.5 * iqr
+      );
+      const upper = Math.min(
+        d3.max(vals),
+        q3 + 1.5 * iqr
+      );
+
+      const cx = x(group) + x.bandwidth()/2;
+      const bw = x.bandwidth() * 0.55;
+
+      // jitter points
+      const groupData = data.filter(d => d.taxgroup === group);
+
+      g.selectAll(`.point-${CSS.escape(group)}`)
+        .data(groupData)
+        .join("circle")
+        .attr("class","jitter-point")
+        .attr("cx", d =>
+          cx + (Math.random() - 0.5) * bw
+        )
+        .attr("cy", d => y(d.value))
+        .attr("r",2.5)
+        .append("title")
+        .text(d => `${d.species}\n${d.value.toLocaleString()} bp`);
+
+      // lower whisker
+      g.append("line")
+        .attr("class","whisker")
+        .attr("x1",cx)
+        .attr("x2",cx)
+        .attr("y1",y(lower))
+        .attr("y2",y(q1));
+
+      // upper whisker
+      g.append("line")
+        .attr("class","whisker")
+        .attr("x1",cx)
+        .attr("x2",cx)
+        .attr("y1",y(q3))
+        .attr("y2",y(upper));
+
+      // whisker caps
+      [lower, upper].forEach(v => {
+        g.append("line")
+          .attr("class","whisker")
+          .attr("x1",cx-bw*0.25)
+          .attr("x2",cx+bw*0.25)
+          .attr("y1",y(v))
+          .attr("y2",y(v));
+      });
+
+      // box
+      g.append("rect")
+        .attr("class","boxplot")
+        .attr("x",cx-bw/2)
+        .attr("y",y(q3))
+        .attr("width",bw)
+        .attr("height",Math.max(1,y(q1)-y(q3)));
+
+      // median
+      g.append("line")
+        .attr("class","box-median")
+        .attr("x1",cx-bw/2)
+        .attr("x2",cx+bw/2)
+        .attr("y1",y(median))
+        .attr("y2",y(median));
+    });
+  });
+}
+
+
+// ---------- tab controls ----------
+
+document.querySelectorAll(".tab").forEach(btn => {
+
+  btn.addEventListener("click", () => {
+
+    document.querySelectorAll(".tab")
+      .forEach(b => b.classList.remove("active"));
+
+    btn.classList.add("active");
+
+    const tab = btn.dataset.tab;
+
+    document.getElementById("treeView").style.display =
+      tab === "tree" ? "block" : "none";
+
+    document.getElementById("summaryView").style.display =
+      tab === "summary" ? "block" : "none";
+
+    if(tab === "summary"){
+      buildSummaryPlots();
+    }
+  });
+
+});
 </script>
 </body>
 </html>
