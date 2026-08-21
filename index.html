@@ -114,6 +114,7 @@
       <button class="metric-btn active" data-metric="unitLength"><span class="swatch"></span>Unit length</button>
       <button class="metric-btn" data-metric="nunits"><span class="swatch"></span>rRNA unit count</button>
       <button class="metric-btn" data-metric="rmad"><span class="swatch"></span>Sequence variability (RMAD)</button>
+      <button class="metric-btn" data-metric="taxgroup"><span class="swatch"></span>Taxonomic group</button>
     </div>
     <div class="group">
       <h2>Taxonomic group</h2>
@@ -154,27 +155,56 @@ const REPEAT_COLORS = {
 };
 function repeatColor(type){ return REPEAT_COLORS[type] || REPEAT_COLORS.Unclassified; }
 
+// ---------- taxonomic group colour key (used for tip colour + chip dots) ----------
+const TAXGROUP_COLORS = {
+  "Mammalia": "#E85D75", "Aves": "#7FA8F5", "Actinopterygii": "#45C4B0",
+  "Lepidosauria": "#C97ADB", "Amphibia": "#63D68A", "Chondrichthyes": "#F0B429",
+  "Testudines and Crocodylia": "#F2789F", "Tunicata": "#8E9AAF", "Cyclostomata": "#B08968",
+  "Sarcopterygii": "#A6E3A1", "Leptocardii": "#F4A261", "Unclassified": "#5F6871"
+};
+function taxgroupColor(grp){ return TAXGROUP_COLORS[grp] || TAXGROUP_COLORS.Unclassified; }
+
 // ---------- state ----------
 let species = [];
 let svg, g, tipNodes, colorScales, currentMetric = "unitLength";
 let activeGroups = new Set();
+let usingNcbiTree = false;
 
-fetch('species.json')
-  .then(r => { if(!r.ok) throw new Error(r.status); return r.json(); })
-  .then(data => {
+Promise.all([
+  fetch('species.json').then(r => { if(!r.ok) throw new Error('species.json: '+r.status); return r.json(); }),
+  fetch('tree.nwk').then(r => r.ok ? r.text() : null).catch(()=>null)
+])
+  .then(([data, nwkText]) => {
     species = data.map(d => ({
       ...d,
       taxgroup: d.taxgroup || "Unclassified",
       segsFull: buildFullSegs(d)
     }));
-    document.getElementById("loadNote").textContent = species.length + " species loaded";
-    buildTree();
+    activeGroups = new Set(species.map(sp=>sp.taxgroup));
+    colorScales = {
+      unitLength: d3.scaleSequential(d3.extent(species,d=>d.unitLength), d3.interpolateRgb("#2C6E64","#45C4B0")),
+      nunits:     d3.scaleSequential(d3.extent(species,d=>d.nunits), d3.interpolateRgb("#5C4A1E","#E8A23D")),
+      rmad:       d3.scaleSequential(d3.extent(species,d=>d.rmad), d3.interpolateRgb("#5C2E28","#E8593C")),
+      taxgroup:   taxgroupColor,
+    };
+
+    if(nwkText){
+      const ok = buildTreeFromNewick(nwkText);
+      usingNcbiTree = ok;
+      if(!ok){ buildGroupedTree(); }
+    } else {
+      buildGroupedTree();
+    }
+    document.getElementById("loadNote").textContent =
+      species.length + " species · " + (usingNcbiTree ? "NCBI species tree" : "grouped taxonomy (add tree.nwk for full phylogeny)");
+
     buildRepeatLegend();
     buildChips();
     buildSummary();
+    wireControls();
   })
   .catch(err => {
-    document.getElementById("loadNote").textContent = "failed to load species.json";
+    document.getElementById("loadNote").textContent = "failed to load data";
     document.getElementById("treePane").innerHTML =
       '<div style="padding:40px;color:var(--text-muted);font-family:var(--font-mono);font-size:12px;">'
       + 'Could not load species.json (' + err.message + ').<br><br>'
@@ -184,6 +214,85 @@ fetch('species.json')
       + 'then open http://localhost:8000/rdna-atlas-demo.html'
       + '</div>';
   });
+
+// ---------- minimal Newick parser ----------
+// Returns nested {name, children, branch_length}. Standard compact parser.
+function parseNewick(str){
+  const tokens = str.split(/\s*(;|\(|\)|,|:)\s*/);
+  let root = {}, cur = root;
+  const stack = [];
+  for(let i=0;i<tokens.length;i++){
+    const tok = tokens[i];
+    switch(tok){
+      case "(": { const c={}; cur.children=[c]; stack.push(cur); cur=c; break; }
+      case ",": { const c={}; stack[stack.length-1].children.push(c); cur=c; break; }
+      case ")": { cur = stack.pop(); break; }
+      case ":": break;
+      case "": break;
+      case ";": break;
+      default: {
+        const prev = tokens[i-1];
+        if(prev==="(" || prev===")" || prev===","){ cur.name = tok; }
+        else if(prev===":"){ cur.branch_length = parseFloat(tok); }
+      }
+    }
+  }
+  return root;
+}
+
+// normalise a tip label for matching: lowercase, underscores->spaces, strip quotes
+function normLabel(s){
+  return String(s||"").toLowerCase().replace(/['"]/g,"").replace(/_/g," ").trim();
+}
+function normTaxid(s){
+  const m = String(s||"").match(/\d+/);
+  return m ? m[0] : null;
+}
+
+// ---------- build tree from a real NCBI Newick file, matched to species.json ----------
+function buildTreeFromNewick(nwkText){
+  let parsed;
+  try { parsed = parseNewick(nwkText); } catch(e){ console.warn("Newick parse failed", e); return false; }
+
+  const byName = new Map(species.map(sp=>[normLabel(sp.Species), sp]));
+  const byTaxid = new Map(species.map(sp=>[normTaxid(sp.TaxID), sp]).filter(([k])=>k));
+
+  let matched = 0, total = 0;
+  (function attach(node){
+    if(node.children){ node.children.forEach(attach); }
+    else {
+      total++;
+      const sp = byName.get(normLabel(node.name)) || byTaxid.get(normTaxid(node.name));
+      if(sp){ node.sp = sp; matched++; }
+    }
+  })(parsed);
+
+  if(total===0 || matched/total < 0.5){
+    console.warn(`Newick tip matching too low (${matched}/${total}) — falling back to grouped view.`);
+    return false;
+  }
+
+  const hierarchy = d3.hierarchy(parsed, d=>d.children);
+  renderTree(hierarchy, { showGroupLabels:false });
+  return true;
+}
+
+// ---------- fallback tree: taxgroup -> order -> species ----------
+function buildGroupedTree(){
+  const byGroup = {};
+  species.forEach(sp=>{
+    (byGroup[sp.taxgroup] = byGroup[sp.taxgroup] || {}),
+    (byGroup[sp.taxgroup][sp.order] = byGroup[sp.taxgroup][sp.order] || []).push(sp);
+  });
+  const root = {name:"Chordata", children: Object.entries(byGroup).map(([grp, orders])=>({
+    name: grp,
+    children: Object.entries(orders).map(([ord, list])=>({
+      name: ord,
+      children: list.map(sp=>({name: sp.Species, sp}))
+    }))
+  }))};
+  renderTree(d3.hierarchy(root), { showGroupLabels:true });
+}
 
 // ---------- fill gaps between annotated genes with spacer segments ----------
 function buildFullSegs(sp){
@@ -200,27 +309,12 @@ function buildFullSegs(sp){
   return out;
 }
 
-// ---------- build tree: taxgroup -> order -> species ----------
-function buildTree(){
-  const byGroup = {};
-  species.forEach(sp=>{
-    (byGroup[sp.taxgroup] = byGroup[sp.taxgroup] || {}), 
-    (byGroup[sp.taxgroup][sp.order] = byGroup[sp.taxgroup][sp.order] || []).push(sp);
-  });
-  activeGroups = new Set(Object.keys(byGroup));
-
-  const root = {name:"Chordata", children: Object.entries(byGroup).map(([grp, orders])=>({
-    name: grp,
-    children: Object.entries(orders).map(([ord, list])=>({
-      name: ord,
-      children: list.map(sp=>({name: sp.Species, sp}))
-    }))
-  }))};
-
-  const hierarchy = d3.hierarchy(root);
-  const leaves = hierarchy.leaves();
+// ---------- shared renderer for either tree source ----------
+function renderTree(hierarchy, opts){
+  document.getElementById("treePane").innerHTML = "";
+  const leaves = hierarchy.leaves().filter(d=>d.data.sp);
   const rowH = 11;
-  const width = 760, height = Math.max(600, leaves.length*rowH + 80);
+  const width = 760, height = Math.max(600, hierarchy.leaves().length*rowH + 80);
   d3.cluster().size([height-70, width-380])(hierarchy);
 
   svg = d3.select("#treePane").append("svg")
@@ -232,34 +326,33 @@ function buildTree(){
     .attr("class","link")
     .attr("d", d3.linkHorizontal().x(d=>d.y).y(d=>d.x));
 
-  colorScales = {
-    unitLength: d3.scaleSequential(d3.extent(species,d=>d.unitLength), d3.interpolateRgb("#2C6E64","#45C4B0")),
-    nunits:     d3.scaleSequential(d3.extent(species,d=>d.nunits), d3.interpolateRgb("#5C4A1E","#E8A23D")),
-    rmad:       d3.scaleSequential(d3.extent(species,d=>d.rmad), d3.interpolateRgb("#5C2E28","#E8593C")),
-  };
-
-  g.selectAll(".group-label")
-    .data(hierarchy.descendants().filter(d=>d.depth===1))
-    .join("text").attr("class","group-label")
-    .attr("x", d=>d.y-6).attr("y", d=>d.x-8).attr("text-anchor","end")
-    .text(d=>d.data.name);
+  if(opts.showGroupLabels){
+    g.selectAll(".group-label")
+      .data(hierarchy.descendants().filter(d=>d.depth===1))
+      .join("text").attr("class","group-label")
+      .attr("x", d=>d.y-6).attr("y", d=>d.x-8).attr("text-anchor","end")
+      .text(d=>d.data.name);
+  }
 
   tipNodes = g.selectAll(".node-tip")
     .data(hierarchy.leaves()).join("g")
     .attr("class","node-tip")
     .attr("transform", d=>`translate(${d.y},${d.x})`)
-    .attr("data-id", d=>d.data.sp.id)
-    .attr("data-group", d=>d.data.sp.taxgroup)
-    .on("mouseenter", (ev,d)=>showTooltip(ev,d.data.sp))
+    .attr("data-id", d=>d.data.sp ? d.data.sp.id : "")
+    .attr("data-group", d=>d.data.sp ? d.data.sp.taxgroup : "")
+    .style("opacity", d=>d.data.sp ? 1 : 0.35)
+    .on("mouseenter", (ev,d)=> d.data.sp && showTooltip(ev,d.data.sp))
     .on("mousemove", moveTooltip)
     .on("mouseleave", hideTooltip)
-    .on("click", (ev,d)=>selectSpecies(d.data.sp.id));
+    .on("click", (ev,d)=> d.data.sp && selectSpecies(d.data.sp.id));
 
   tipNodes.append("circle").attr("r",3.2)
-    .attr("fill", d=>colorScales[currentMetric](d.data.sp[currentMetric]));
+    .attr("fill", d=> d.data.sp ? colorScales[currentMetric](d.data.sp[currentMetric]) : "var(--text-muted)");
   tipNodes.append("text").attr("class","tip-label")
     .attr("x",7).attr("y",3).text(d=>d.data.name);
+}
 
+function wireControls(){
   document.querySelectorAll(".metric-btn").forEach(btn=>{
     btn.addEventListener("click",()=>{
       document.querySelectorAll(".metric-btn").forEach(b=>b.classList.remove("active"));
@@ -273,16 +366,17 @@ function buildTree(){
 
 function recolor(){
   tipNodes.select("circle").transition().duration(200)
-    .attr("fill", d=>colorScales[currentMetric](d.data.sp[currentMetric]));
+    .attr("fill", d=> d.data.sp ? colorScales[currentMetric](d.data.sp[currentMetric]) : "var(--text-muted)");
 }
 
-// ---------- taxonomic group filter chips ----------
+// ---------- taxonomic group filter chips (dot colour = same key used for "colour by group") ----------
 function buildChips(){
   const chipsEl = document.getElementById("chips");
   chipsEl.innerHTML = "";
   [...activeGroups].sort().forEach(grp=>{
     const chip=document.createElement("div");
-    chip.className="class-chip active"; chip.textContent=grp;
+    chip.className="class-chip active";
+    chip.innerHTML = `<span class="dot" style="background:${taxgroupColor(grp)}"></span>${grp}`;
     chip.addEventListener("click",()=>{
       if(activeGroups.has(grp)){activeGroups.delete(grp); chip.classList.remove("active");}
       else{activeGroups.add(grp); chip.classList.add("active");}
@@ -296,6 +390,7 @@ function applyFilter(){
   const q = document.getElementById("search").value.trim().toLowerCase();
   tipNodes.each(function(d){
     const sp=d.data.sp;
+    if(!sp){ d3.select(this).style("display", q ? "none" : null); return; }
     const groupOk = activeGroups.has(sp.taxgroup);
     const searchOk = !q || sp.Species.toLowerCase().includes(q) || sp.id.toLowerCase().includes(q);
     d3.select(this).style("display", (groupOk && searchOk) ? null : "none");
@@ -387,365 +482,6 @@ function buildSummary(){
     <div class="stat-line"><span>Median unit length</span><span>${Math.round(d3.median(species,d=>d.unitLength)).toLocaleString()} bp</span></div>
   `;
 }
-</script>
-<style>
-  :root{
-    --bg:#12151A; --panel:#1A1F26; --panel-2:#212832;
-    --border:#2A313B; --border-strong:#3A424D;
-    --text-primary:#ECEAE3; --text-secondary:#9CA3AE; --text-muted:#5F6871;
-    --accent:#45C4B0; --accent-dim:#2C6E64;
-    --g-18s:#E8A23D; --g-58s:#E8593C; --g-28s:#4F8FE8; --g-5s:#9B7FE8;
-    --g-spacer:#3D4552; --g-igs:#252B33; --g-repeat:#C97A3D;
-    --radius:8px;
-    --font-display:'Space Grotesk',sans-serif; --font-body:'Inter',sans-serif; --font-mono:'JetBrains Mono',monospace;
-  }
-  *{box-sizing:border-box;}
-  html,body{margin:0;padding:0;background:var(--bg);color:var(--text-primary);font-family:var(--font-body);height:100%;}
-  a{color:var(--accent);}
-  ::selection{background:var(--accent-dim);}
-
-  header{
-    display:flex; align-items:baseline; justify-content:space-between;
-    padding:20px 28px; border-bottom:1px solid var(--border);
-    background:var(--panel);
-  }
-  header .brand{display:flex; align-items:baseline; gap:12px;}
-  header h1{font-family:var(--font-display); font-weight:600; font-size:20px; margin:0; letter-spacing:-0.01em;}
-  header .tag{font-family:var(--font-mono); font-size:12px; color:var(--text-muted);}
-  header .note{font-family:var(--font-mono); font-size:11px; color:var(--g-repeat); border:1px solid #4A3524; background:#241C14; padding:4px 10px; border-radius:20px;}
-
-  .layout{display:grid; grid-template-columns:260px 1fr 380px; min-height:calc(100vh - 65px);}
-  @media (max-width: 1000px){ .layout{grid-template-columns:1fr;} .detail{border-left:none; border-top:1px solid var(--border);} .controls{border-right:none; border-bottom:1px solid var(--border);} }
-
-  .controls{padding:22px; border-right:1px solid var(--border); background:var(--panel);}
-  .controls h2{font-family:var(--font-display); font-size:13px; font-weight:600; text-transform:uppercase; letter-spacing:0.06em; color:var(--text-secondary); margin:0 0 12px;}
-  .controls .group{margin-bottom:26px;}
-  input[type=search]{
-    width:100%; background:var(--panel-2); border:1px solid var(--border-strong); color:var(--text-primary);
-    padding:9px 12px; border-radius:var(--radius); font-family:var(--font-body); font-size:13px; outline:none;
-  }
-  input[type=search]:focus{border-color:var(--accent);}
-  .metric-btn{
-    display:block; width:100%; text-align:left; background:none; border:1px solid transparent; color:var(--text-secondary);
-    padding:8px 10px; border-radius:var(--radius); font-family:var(--font-body); font-size:13px; cursor:pointer; margin-bottom:4px;
-  }
-  .metric-btn:hover{background:var(--panel-2);}
-  .metric-btn.active{background:var(--panel-2); border-color:var(--border-strong); color:var(--text-primary); font-weight:500;}
-  .metric-btn .swatch{display:inline-block; width:8px; height:8px; border-radius:50%; margin-right:8px; background:var(--accent);}
-  .class-chip{
-    display:inline-flex; align-items:center; gap:6px; font-family:var(--font-mono); font-size:11px; color:var(--text-secondary);
-    border:1px solid var(--border-strong); padding:5px 9px; border-radius:20px; margin:0 6px 6px 0; cursor:pointer; background:var(--panel-2);
-  }
-  .class-chip.active{color:var(--bg); background:var(--accent); border-color:var(--accent); font-weight:500;}
-  .legend-key{font-size:11px; font-family:var(--font-mono); color:var(--text-muted); line-height:1.9;}
-  .legend-key .dot{display:inline-block; width:9px; height:9px; border-radius:2px; margin-right:7px; vertical-align:-1px;}
-  .stat-line{display:flex; justify-content:space-between; font-family:var(--font-mono); font-size:12px; color:var(--text-secondary); padding:4px 0; border-bottom:1px solid var(--border);}
-  .stat-line span:last-child{color:var(--text-primary);}
-
-  .tree-pane{position:relative; overflow:auto; padding:10px 0;}
-  .tree-pane svg{display:block; margin:0 auto;}
-  .node-tip{cursor:pointer;}
-  .node-tip circle{stroke:var(--bg); stroke-width:1.5px; transition:r .12s ease;}
-  .node-tip:hover circle{stroke:var(--text-primary);}
-  .node-tip.selected circle{stroke:var(--accent); stroke-width:2px;}
-  .link{fill:none; stroke:var(--border-strong); stroke-width:1px;}
-  .tip-label{font-family:var(--font-mono); font-size:10.5px; fill:var(--text-secondary);}
-  .group-label{font-family:var(--font-display); font-size:11px; font-weight:500; fill:var(--text-muted); text-transform:uppercase; letter-spacing:0.04em;}
-  .tooltip{
-    position:fixed; pointer-events:none; background:var(--panel-2); border:1px solid var(--border-strong);
-    border-radius:var(--radius); padding:10px 12px; font-family:var(--font-mono); font-size:11px; color:var(--text-primary);
-    box-shadow:0 8px 24px rgba(0,0,0,0.4); z-index:50; display:none; max-width:240px;
-  }
-  .tooltip .t-name{font-family:var(--font-body); font-weight:600; font-size:13px; margin-bottom:4px; color:var(--text-primary);}
-  .tooltip .t-sub{color:var(--text-muted); margin-bottom:8px;}
-
-  .detail{border-left:1px solid var(--border); background:var(--panel); padding:26px; overflow-y:auto;}
-  .detail .empty{color:var(--text-muted); font-size:13px; margin-top:40px; text-align:center;}
-  .detail .sp-name{font-family:var(--font-display); font-size:19px; font-weight:600; margin:0 0 2px;}
-  .detail .sp-latin{font-family:var(--font-mono); font-size:12px; color:var(--text-muted); font-style:italic; margin-bottom:4px;}
-  .detail .sp-taxo{font-family:var(--font-mono); font-size:11px; color:var(--text-secondary); margin-bottom:18px;}
-  .detail .sp-taxo b{color:var(--accent); font-weight:500;}
-  .ruler-wrap{margin:18px 0 10px;}
-  .ruler-wrap h3{font-family:var(--font-display); font-size:12px; font-weight:600; text-transform:uppercase; letter-spacing:0.05em; color:var(--text-secondary); margin:0 0 10px;}
-  .ruler-svg text{font-family:var(--font-mono); font-size:9.5px; fill:var(--text-muted);}
-  .ruler-svg .gene-label{font-size:10px; font-weight:500;}
-  .repeat-note{font-family:var(--font-mono); font-size:10.5px; color:var(--g-repeat); margin-top:6px;}
-  .badge-5s{display:inline-flex; align-items:center; gap:6px; font-family:var(--font-mono); font-size:11px; color:var(--g-5s); border:1px solid #3A2E5C; background:#1E1830; padding:4px 10px; border-radius:6px; margin-top:14px;}
-  footer{padding:14px 28px; border-top:1px solid var(--border); font-family:var(--font-mono); font-size:10.5px; color:var(--text-muted); background:var(--panel);}
-</style>
-</head>
-<body>
-
-<header>
-  <div class="brand">
-    <h1>rDNA Atlas</h1>
-    <span class="tag">chordate ribosomal DNA unit diversity</span>
-  </div>
-  <span class="note" id="loadNote">loading species.json…</span>
-</header>
-
-<div class="layout">
-  <aside class="controls">
-    <div class="group">
-      <h2>Search</h2>
-      <input type="search" id="search" placeholder="Species or accession…">
-    </div>
-    <div class="group">
-      <h2>Colour tips by</h2>
-      <button class="metric-btn active" data-metric="unitLength"><span class="swatch"></span>Unit length</button>
-      <button class="metric-btn" data-metric="nunits"><span class="swatch"></span>rRNA unit count</button>
-      <button class="metric-btn" data-metric="rmad"><span class="swatch"></span>Sequence variability (RMAD)</button>
-    </div>
-    <div class="group">
-      <h2>Taxonomic group</h2>
-      <div id="chips"></div>
-    </div>
-    <div class="group">
-      <h2>Unit map key</h2>
-      <div class="legend-key">
-        <div><span class="dot" style="background:var(--g-18s)"></span>18S rRNA</div>
-        <div><span class="dot" style="background:var(--g-58s)"></span>5.8S rRNA</div>
-        <div><span class="dot" style="background:var(--g-28s)"></span>28S rRNA</div>
-        <div><span class="dot" style="background:var(--g-spacer)"></span>Spacer (non-coding)</div>
-      </div>
-    </div>
-    <div class="group">
-      <h2>Repeat key</h2>
-      <div class="legend-key" id="repeatLegend"></div>
-    </div>
-    <div class="group" id="summaryStats"></div>
-  </aside>
-
-  <main class="tree-pane" id="treePane"></main>
-
-  <aside class="detail" id="detail">
-    <div class="empty">Select a tip on the tree to view its rDNA unit structure.</div>
-  </aside>
-</div>
-
-<footer>Ribocop pipeline output — 650 chordate assemblies. Loaded live from species.json (must be served, not opened as a local file — see notes below).</footer>
-<div class="tooltip" id="tooltip"></div>
-
-<script>
-// ---------- synthetic data generation ----------
-function mulberry32(seed){return function(){seed|=0;seed=seed+0x6D2B79F5|0;let t=Math.imul(seed^seed>>>15,1|seed);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296;};}
-const rand = mulberry32(42);
-const CLASSES = {
-  Mammalia:{orders:["Primates","Carnivora","Rodentia","Cetacea"], unit:[9500,13500], igsShare:.55},
-  Aves:{orders:["Passeriformes","Accipitriformes","Anseriformes"], unit:[10500,12800], igsShare:.5},
-  Reptilia:{orders:["Squamata","Testudines","Crocodylia"], unit:[8800,11800], igsShare:.48},
-  Amphibia:{orders:["Anura","Caudata"], unit:[9800,15200], igsShare:.5},
-  Actinopterygii:{orders:["Cypriniformes","Perciformes","Salmoniformes"], unit:[7200,9600], igsShare:.4},
-  Chondrichthyes:{orders:["Carcharhiniformes","Rajiformes"], unit:[8600,10600], igsShare:.42},
-};
-const NAMES = {
-  Primates:["Homo sapiens|Human","Pan troglodytes|Chimpanzee","Macaca mulatta|Rhesus macaque","Callithrix jacchus|Common marmoset","Gorilla gorilla|Western gorilla"],
-  Carnivora:["Canis lupus|Grey wolf","Felis catus|Domestic cat","Ursus maritimus|Polar bear","Panthera leo|Lion"],
-  Rodentia:["Mus musculus|House mouse","Rattus norvegicus|Brown rat","Cavia porcellus|Guinea pig","Castor canadensis|American beaver"],
-  Cetacea:["Balaenoptera musculus|Blue whale","Tursiops truncatus|Bottlenose dolphin"],
-  Passeriformes:["Taeniopygia guttata|Zebra finch","Corvus corone|Carrion crow","Parus major|Great tit"],
-  Accipitriformes:["Haliaeetus leucocephalus|Bald eagle","Aquila chrysaetos|Golden eagle"],
-  Anseriformes:["Anas platyrhynchos|Mallard","Anser anser|Greylag goose"],
-  Squamata:["Anolis carolinensis|Green anole","Python bivittatus|Burmese python","Varanus komodoensis|Komodo dragon"],
-  Testudines:["Chelonia mydas|Green sea turtle","Terrapene carolina|Eastern box turtle"],
-  Crocodylia:["Alligator mississippiensis|American alligator","Crocodylus niloticus|Nile crocodile"],
-  Anura:["Xenopus tropicalis|Western clawed frog","Rana temporaria|Common frog","Bufo bufo|Common toad"],
-  Caudata:["Ambystoma mexicanum|Axolotl","Salamandra salamandra|Fire salamander"],
-  Cypriniformes:["Danio rerio|Zebrafish","Cyprinus carpio|Common carp"],
-  Perciformes:["Oreochromis niloticus|Nile tilapia","Perca fluviatilis|European perch","Larimichthys crocea|Large yellow croaker"],
-  Salmoniformes:["Salmo salar|Atlantic salmon","Oncorhynchus mykiss|Rainbow trout"],
-  Carcharhiniformes:["Carcharhinus leucas|Bull shark","Scyliorhinus canicula|Small-spotted catshark"],
-  Rajiformes:["Leucoraja erinacea|Little skate","Raja clavata|Thornback ray"],
-};
-function jitter(lo,hi){return Math.round(lo+rand()*(hi-lo));}
-
-const species = [];
-let acc=0;
-Object.entries(CLASSES).forEach(([cls,info])=>{
-  info.orders.forEach(ord=>{
-    (NAMES[ord]||[]).forEach(entry=>{
-      const [latin,common]=entry.split("|");
-      const unitLength = jitter(info.unit[0], info.unit[1]);
-      const s18 = jitter(1780,1870), s58=jitter(150,160), s28=jitter(3300,3550);
-      const igs = Math.round(unitLength*(info.igsShare+ (rand()-0.5)*0.08));
-      const remaining = unitLength - s18 - s58 - s28 - igs;
-      const ets = Math.round(remaining*0.28), its1=Math.round(remaining*0.34), its2=remaining-ets-its1;
-      let pos=0;
-      const segs=[
-        {type:"ETS",len:ets},{type:"18S",len:s18},{type:"ITS1",len:its1},
-        {type:"5.8S",len:s58},{type:"ITS2",len:its2},{type:"28S",len:s28},{type:"IGS",len:igs}
-      ].map(g=>{const start=pos; pos+=g.len; return {...g,start,end:pos};});
-      const repeats=[];
-      const nRep = rand()<0.6 ? jitter(0,2) : 0;
-      for(let i=0;i<nRep;i++){
-        const igsSeg=segs.find(s=>s.type==="IGS");
-        const rs=jitter(igsSeg.start+50, igsSeg.end-300);
-        repeats.push({family:["LINE/L1","SINE/tRNA","LTR/ERV","DNA/hAT"][jitter(0,3)], start:rs, end:rs+jitter(180,900)});
-      }
-      acc++;
-      species.push({
-        id:"sp"+acc, latin, common, class:cls, order:ord,
-        accession:"GCA_"+ (900000000+jitter(1,99999999)).toString().padStart(9,"0")+".1",
-        unitLength, arrayCount: jitter(30,420), gc: +(jitter(430,620)/10).toFixed(1),
-        segs, repeats
-      });
-    });
-  });
-});
-
-// ---------- layout: build hierarchy for tree ----------
-const root = {name:"Chordata", children: Object.keys(CLASSES).map(cls=>({
-  name:cls,
-  children: CLASSES[cls].orders.filter(o=>NAMES[o]).map(ord=>({
-    name:ord,
-    children: species.filter(s=>s.order===ord).map(s=>({name:s.latin, sp:s}))
-  }))
-}))};
-
-const hierarchy = d3.hierarchy(root);
-const leaves = hierarchy.leaves();
-const rowH = 17;
-const width = 720, height = Math.max(500, leaves.length*rowH + 60);
-d3.cluster().size([height-60, width-360])(hierarchy);
-
-const svg = d3.select("#treePane").append("svg")
-  .attr("width", width).attr("height", height+20)
-  .attr("viewBox", `0 0 ${width} ${height+20}`);
-const g = svg.append("g").attr("transform","translate(40,40)");
-
-g.selectAll(".link").data(hierarchy.links()).join("path")
-  .attr("class","link")
-  .attr("d", d3.linkHorizontal().x(d=>d.y).y(d=>d.x));
-
-const colorScales = {
-  unitLength: d3.scaleSequential(d3.extent(species,d=>d.unitLength), d3.interpolateRgb("#2C6E64","#45C4B0")),
-  arrayCount: d3.scaleSequential(d3.extent(species,d=>d.arrayCount), d3.interpolateRgb("#5C4A1E","#E8A23D")),
-  gc: d3.scaleSequential(d3.extent(species,d=>d.gc), d3.interpolateRgb("#5C2E28","#E8593C")),
-};
-let currentMetric = "unitLength";
-
-g.selectAll(".group-label")
-  .data(hierarchy.descendants().filter(d=>d.depth===1))
-  .join("text").attr("class","group-label")
-  .attr("x", d=>d.y-6).attr("y", d=>d.x-10).attr("text-anchor","end")
-  .text(d=>d.data.name);
-
-const tipNodes = g.selectAll(".node-tip")
-  .data(hierarchy.leaves()).join("g")
-  .attr("class","node-tip")
-  .attr("transform", d=>`translate(${d.y},${d.x})`)
-  .attr("data-id", d=>d.data.sp.id)
-  .on("mouseenter", (ev,d)=>showTooltip(ev,d.data.sp))
-  .on("mousemove", (ev)=>moveTooltip(ev))
-  .on("mouseleave", hideTooltip)
-  .on("click", (ev,d)=>selectSpecies(d.data.sp.id));
-
-tipNodes.append("circle").attr("r",4)
-  .attr("fill", d=>colorScales[currentMetric](d.data.sp[currentMetric]));
-tipNodes.append("text").attr("class","tip-label")
-  .attr("x",8).attr("y",3).text(d=>d.data.name);
-
-function recolor(){
-  tipNodes.select("circle").transition().duration(200)
-    .attr("fill", d=>colorScales[currentMetric](d.data.sp[currentMetric]));
-}
-
-// ---------- controls ----------
-document.querySelectorAll(".metric-btn").forEach(btn=>{
-  btn.addEventListener("click",()=>{
-    document.querySelectorAll(".metric-btn").forEach(b=>b.classList.remove("active"));
-    btn.classList.add("active");
-    currentMetric = btn.dataset.metric;
-    recolor();
-  });
-});
-
-const chipsEl = document.getElementById("chips");
-let activeClasses = new Set(Object.keys(CLASSES));
-Object.keys(CLASSES).forEach(cls=>{
-  const chip=document.createElement("div");
-  chip.className="class-chip active"; chip.textContent=cls;
-  chip.addEventListener("click",()=>{
-    if(activeClasses.has(cls)){activeClasses.delete(cls); chip.classList.remove("active");}
-    else{activeClasses.add(cls); chip.classList.add("active");}
-    applyFilter();
-  });
-  chipsEl.appendChild(chip);
-});
-document.getElementById("search").addEventListener("input", applyFilter);
-
-function applyFilter(){
-  const q = document.getElementById("search").value.trim().toLowerCase();
-  tipNodes.each(function(d){
-    const sp=d.data.sp;
-    const classOk = activeClasses.has(sp.class);
-    const searchOk = !q || sp.latin.toLowerCase().includes(q) || sp.common.toLowerCase().includes(q) || sp.accession.toLowerCase().includes(q);
-    d3.select(this).style("display", (classOk && searchOk) ? null : "none");
-  });
-}
-
-// ---------- tooltip ----------
-const tooltip = document.getElementById("tooltip");
-function showTooltip(ev, sp){
-  tooltip.innerHTML = `<div class="t-name">${sp.common}</div><div class="t-sub">${sp.latin} · ${sp.class}</div>
-    <div>unit length <b style="color:var(--text-primary)">${sp.unitLength.toLocaleString()} bp</b></div>
-    <div>array copies <b style="color:var(--text-primary)">${sp.arrayCount}</b></div>
-    <div>taxonomic group <b style="color:var(--text-primary)">${sp.group}</b></div>;
-  tooltip.style.display="block"; moveTooltip(ev);
-}
-function moveTooltip(ev){ tooltip.style.left=(ev.clientX+16)+"px"; tooltip.style.top=(ev.clientY+16)+"px"; }
-function hideTooltip(){ tooltip.style.display="none"; }
-
-// ---------- detail panel ----------
-function selectSpecies(id){
-  const sp = species.find(s=>s.id===id);
-  document.querySelectorAll(".node-tip").forEach(n=>n.classList.toggle("selected", n.dataset.id===id));
-  const total = sp.segs[sp.segs.length-1].end;
-  const w = 328;
-  const segsSvg = sp.segs.map(seg=>{
-    const x = (seg.start/total)*w, sw = Math.max((seg.len/total)*w,1);
-    const colorVar = {ETS:"var(--g-spacer)",ITS1:"var(--g-spacer)",ITS2:"var(--g-spacer)","18S":"var(--g-18s)","5.8S":"var(--g-58s)","28S":"var(--g-28s)",IGS:"var(--g-igs)"}[seg.type];
-    const showLabel = sw>26;
-    return `<g><rect x="${x}" y="0" width="${sw}" height="34" fill="${colorVar}" stroke="var(--panel)" stroke-width="0.5"/>
-      ${showLabel?`<text class="gene-label" x="${x+sw/2}" y="21" text-anchor="middle" fill="${["18S","5.8S","28S"].includes(seg.type)?"#12151A":"var(--text-secondary)"}">${seg.type}</text>`:""}</g>`;
-  }).join("");
-  const repeatTicks = sp.repeats.map(r=>{
-    const x=(r.start/total)*w, rw=Math.max((r.end-r.start)/total*w,2);
-    return `<rect x="${x}" y="40" width="${rw}" height="6" fill="var(--g-repeat)" rx="1"/>`;
-  }).join("");
-  const repeatNote = sp.repeats.length
-    ? `<div class="repeat-note">${sp.repeats.length} repeat insertion${sp.repeats.length>1?"s":""} in IGS: ${sp.repeats.map(r=>r.family).join(", ")}</div>`
-    : `<div class="repeat-note" style="color:var(--text-muted)">No repeat insertions detected in representative unit</div>`;
-
-  document.getElementById("detail").innerHTML = `
-    <div class="sp-name">${sp.common}</div>
-    <div class="sp-latin">${sp.latin}</div>
-    <div class="sp-taxo"><b>${sp.class}</b> · ${sp.order} · ${sp.accession}</div>
-
-    <div class="stat-line"><span>Unit length</span><span>${sp.unitLength.toLocaleString()} bp</span></div>
-    <div class="stat-line"><span>Array copy number</span><span>${sp.arrayCount}</span></div>
-    <div class="stat-line"><span>GC content</span><span>${sp.gc}%</span></div>
-
-    <div class="ruler-wrap">
-      <h3>Representative unit (to scale)</h3>
-      <svg class="ruler-svg" width="${w}" height="52" viewBox="0 0 ${w} 52">
-        ${segsSvg}
-        ${repeatTicks}
-      </svg>
-      ${repeatNote}
-    </div>
-
-    <div class="badge-5s">5S rDNA · unlinked locus · not shown</div>
-  `;
-}
-
-// ---------- summary stats ----------
-document.getElementById("summaryStats").innerHTML = `
-  <h2>Dataset</h2>
-  <div class="stat-line"><span>Species</span><span>${species.length}</span></div>
-  <div class="stat-line"><span>Classes</span><span>${Object.keys(CLASSES).length}</span></div>
-  <div class="stat-line"><span>Median unit length</span><span>${d3.median(species,d=>d.unitLength).toLocaleString()} bp</span></div>
-`;
 </script>
 </body>
 </html>
