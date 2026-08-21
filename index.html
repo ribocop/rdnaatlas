@@ -13,7 +13,7 @@
     --border:#2A313B; --border-strong:#3A424D;
     --text-primary:#ECEAE3; --text-secondary:#9CA3AE; --text-muted:#5F6871;
     --accent:#45C4B0; --accent-dim:#2C6E64;
-    --g-18s:#E8A23D; --g-58s:#E8593C; --g-28s:#4F8FE8; --g-5s:#9B7FE8;
+    --g-18s:#F75F86; --g-58s:#50C878; --g-28s:#6495ED; --g-5s:#9B7FE8;
     --g-spacer:#3D4552; --g-igs:#252B33; --g-repeat:#C97A3D;
     --radius:8px;
     --font-display:'Space Grotesk',sans-serif; --font-body:'Inter',sans-serif; --font-mono:'JetBrains Mono',monospace;
@@ -149,18 +149,18 @@
 <script>
 // ---------- config: colour maps for repeat categories ----------
 const REPEAT_COLORS = {
-  "Tandem": "#C97A3D", "Simple": "#8A8F98", "SINE": "#63B3ED", "LTR": "#B794F4",
-  "DNA transposon": "#ECC94B", "LINE": "#F56565", "Retrotransposon": "#48BB78",
+  "Tandem": "#999999", "Simple": "#FFFFFF", "SINE": "#1B9E77", "LTR": "#D95F02",
+  "DNA transposon": "#7570B3", "LINE": "#E7298A", "Retrotransposon": "#E6AB02",
   "Unclassified": "#4A5568"
 };
 function repeatColor(type){ return REPEAT_COLORS[type] || REPEAT_COLORS.Unclassified; }
 
 // ---------- taxonomic group colour key (used for tip colour + chip dots) ----------
 const TAXGROUP_COLORS = {
-  "Mammalia": "#E85D75", "Aves": "#7FA8F5", "Actinopterygii": "#45C4B0",
-  "Lepidosauria": "#C97ADB", "Amphibia": "#63D68A", "Chondrichthyes": "#F0B429",
-  "Testudines and Crocodylia": "#F2789F", "Tunicata": "#8E9AAF", "Cyclostomata": "#B08968",
-  "Sarcopterygii": "#A6E3A1", "Leptocardii": "#F4A261", "Unclassified": "#5F6871"
+  "Mammalia": "#B2DF8A", "Aves": "#1F78B4", "Actinopterygii": "#A6CEE3",
+  "Lepidosauria": "#33A02C", "Amphibia": "#E31A1C", "Chondrichthyes": "#CAB2D6",
+  "Testudines and Crocodylia": "#F2789F", "Tunicata": "#FDBF6F", "Cyclostomata": "#6A3D9A",
+  "Sarcopterygii": "#FFFF99", "Leptocardii": "#FF7F00", "Unclassified": "#5F6871"
 };
 function taxgroupColor(grp){ return TAXGROUP_COLORS[grp] || TAXGROUP_COLORS.Unclassified; }
 
