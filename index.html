@@ -848,9 +848,9 @@ function buildSummaryPlots(){
         .attr("y",y(q3))
         .attr("width",bw)
         .attr("height",Math.max(1,y(q1)-y(q3)))
-        .attr("fill",taxgroupColor(group))
-        .attr("fill-opacity",0.65)
-        .attr("stroke",taxgroupColor(group));
+        .style("fill",taxgroupColor(group))
+        .style("fill-opacity",0.65)
+        .style("stroke",taxgroupColor(group));
 
       // median
       g.append("line")
