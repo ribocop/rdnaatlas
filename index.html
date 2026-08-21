@@ -619,7 +619,7 @@ const SUMMARY_METRICS = [
   { key:"28S", label:"28S rRNA length" },
   { key:"tandem", label:"Tandem repeat length" },
   { key:"simple", label:"Simple repeat length" },
-  { key:"other", label:"Other repeat length" }
+  { key:"other", label:"Tandem repeat length" }
 ];
 
 function getSummaryValue(sp, metric){
@@ -847,7 +847,10 @@ function buildSummaryPlots(){
         .attr("x",cx-bw/2)
         .attr("y",y(q3))
         .attr("width",bw)
-        .attr("height",Math.max(1,y(q1)-y(q3)));
+        .attr("height",Math.max(1,y(q1)-y(q3)))
+        .attr("fill",taxgroupColor(group))
+        .attr("fill-opacity",0.65)
+        .attr("stroke",taxgroupColor(group));
 
       // median
       g.append("line")
