@@ -850,6 +850,7 @@ function buildSummaryPlots(){
         .attr("height",Math.max(1,y(q1)-y(q3)))
         .style("fill",taxgroupColor(group))
         .style("fill-opacity",0.65);
+        .style("stroke","#000000");
 
       // median
       g.append("line")
@@ -858,7 +859,7 @@ function buildSummaryPlots(){
         .attr("x2",cx+bw/2)
         .attr("y1",y(median))
         .attr("y2",y(median))
-        .attr("stroke","#000000");
+        .style("stroke","#000000");
     });
   });
 }
